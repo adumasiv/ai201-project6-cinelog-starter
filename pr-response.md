@@ -58,4 +58,34 @@ For Comment 5, it pointed out that I'd bundled an unrelated correctness bug fix 
 **How I verified the conflict was fully addressed:** After finding the leftover markers, I edited `.gitignore` down to the actual union of both versions (`.pytest_cache/`, `.venv/`, `venv/`, plus the lines common to both), re-ran the grep for conflict markers across the working tree and got no matches, confirmed `cat .gitignore` reads as a clean, valid ignore file, and committed that fix separately (`fce49b0`) rather than folding it invisibly into the original rebase commit — so the history honestly shows a conflict happened and needed a follow-up fix, instead of looking like it resolved cleanly the first time.
 
 ## PR Description
-<!-- Written at the end — feature overview, design decisions, manual testing steps -->
+What this feature does
+Adds a watchlist to CineLog — a per-user list of films someone wants to watch, separate from their Collection (films they've already watched and logged). It introduces:
+
+WatchlistEntry model (user_id, film_id, date_added, public)
+add_to_watchlist(user_id, film_id) — adds a film to a user's watchlist, raising FilmNotFoundError for a nonexistent film and AlreadyInWatchlistError on duplicate adds (no silent double-inserts)
+get_watchlist(user_id) — returns a user's watchlist as a list of film dicts with date_added and public attached
+GET /watchlist/<user_id> and POST /watchlist/<user_id>/add endpoints
+Design decisions
+1. Visibility defaults to public (public = db.Column(db.Boolean, default=True)). Watchlists are a social/discovery feature, not a private utility list — the value is in friends being able to see what you want to watch, and in future recommendation features built on public watchlists. Defaulting to public means that value is realized on the very first add, with no extra opt-in step. The tradeoff: this isn't cost-free — a user isn't necessarily choosing to broadcast an entry just by adding it, and there's currently no UI indicator or confirmation at add-time that the entry is public, so the honest position is that this default should ship alongside a visible "this is public" indicator, not silently on its own.
+
+2. Sort order is date_added descending (most recent first), not alphabetical. get_watchlist() orders by WatchlistEntry.date_added.desc(), matching get_collection()'s existing pattern. A watchlist is a queue of intent, not a catalog to browse — the entries most relevant to "what do I actually want to watch" are the ones just added, and alphabetical order discards that signal entirely. This also makes watchlist and collection behave consistently for a user switching between the two views.
+
+Manual testing steps
+Start the app: python app.py (runs on http://127.0.0.1:5000 by default).
+Get a valid film_id to test with: GET http://127.0.0.1:5000/films/ — copy the id of any film from the response.
+Get a valid user_id: there's no /users endpoint yet, so open a Flask shell (flask shell or python -c "from app import create_app, db; from models import User; ...") and query User.query.first().id, or inspect the seeded cinelog.db sqlite file directly.
+Add a film to the watchlist:
+POST http://127.0.0.1:5000/watchlist/<user_id>/add
+Content-Type: application/json
+{ "film_id": "<film_id>" }
+Expect 201 with the created entry (id, user_id, film_id, date_added, public: true).
+
+View the watchlist:
+GET http://127.0.0.1:5000/watchlist/<user_id>
+Expect a 200 with a list containing the film you just added, public: true, and date_added populated.
+
+Verify sort order: repeat step 4 with a second, different film_id, then re-run step 5 — the second film added should now appear first in the list (most recently added first).
+Verify deduplication: repeat step 4 with the same film_id used in step 4 — expect the request to fail rather than silently succeed (an AlreadyInWatchlistError, surfaced as a non-201 response).
+Verify nonexistent-film handling: repeat step 4 with a film_id that doesn't exist (e.g. "00000000-0000-0000-0000-000000000000") — expect it to fail with a not-found error rather than a raw database error.
+
+<img width="1053" height="749" alt="Screenshot 2026-07-15 at 9 27 49 AM" src="https://github.com/user-attachments/assets/a5b767f7-17d7-47ee-aa5d-5c6dcae0f524" />
