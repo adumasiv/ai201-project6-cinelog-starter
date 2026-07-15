@@ -61,14 +61,13 @@ def get_watchlist(user_id):
     entries = (
         WatchlistEntry.query
         .filter_by(user_id=user_id)
-        .join(Film)
-        .order_by(Film.title.asc())
+        .order_by(WatchlistEntry.date_added.desc())
         .all()
     )
 
     result = []
     for entry in entries:
-        film_dict = entry.film.to_dict()
+        film_dict = db.session.get(Film, entry.film_id).to_dict()
         film_dict["date_added"] = entry.date_added.isoformat()
         film_dict["public"] = entry.public
         result.append(film_dict)
